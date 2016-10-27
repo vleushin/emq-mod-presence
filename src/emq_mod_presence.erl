@@ -48,7 +48,7 @@ on_client_disconnected(Reason, #mqtt_client{client_id = ClientId}, Env) ->
     Payload = mochijson2:encode([{clientid, ClientId},
                                  {reason, reason(Reason)},
                                  {ts, emqttd_time:now_to_secs()}]),
-    Msg = message(qos(Opts), topic(disconnected, ClientId), Payload),
+    Msg = message(qos(Env), topic(disconnected, ClientId), Payload),
     emqttd:publish(emqttd_message:set_flag(sys, Msg)), ok.
 
 unload(_Env) ->
@@ -66,7 +66,7 @@ topic(disconnected, ClientId) ->
 sess(false) -> true;
 sess(true)  -> false.
 
-qos(Env) -> proplists:get_value(qos, Opts, 0).
+qos(Env) -> proplists:get_value(qos, Env, 0).
 
 reason(Reason) when is_atom(Reason) -> Reason;
 reason({Error, _}) when is_atom(Error) -> Error;

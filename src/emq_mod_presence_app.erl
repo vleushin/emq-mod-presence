@@ -20,6 +20,8 @@
 
 -export([start/2, stop/1]).
 
+-export([init/1]).
+
 start(_Type, _Args) ->
     if_enabled(fun emq_mod_presence:load/1),
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
