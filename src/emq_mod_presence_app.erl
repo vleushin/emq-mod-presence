@@ -34,7 +34,7 @@ init([]) ->
 	{ok, {{one_for_one, 1, 5}, []}}.
 
 if_enabled(Fun) ->
-    case application:get_env(emq_mod_presence, enable) of
+    case application:get_env(emq_mod_presence, enable, false) of
         true  -> Fun(application:get_all_env(emq_mod_presence));
         false -> ok
     end.
