@@ -20,6 +20,8 @@
 
 -export([start/2, stop/1]).
 
+-behaviour(supervisor).
+
 -export([init/1]).
 
 start(_Type, _Args) ->
