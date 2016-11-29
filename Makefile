@@ -1,6 +1,6 @@
 PROJECT = emq_mod_presence
 PROJECT_DESCRIPTION = Presence Module
-PROJECT_VERSION = 2.0.1
+PROJECT_VERSION = 3.0
 
 BUILD_DEPS = emqttd
 dep_emqttd = git https://github.com/emqtt/emqttd master
