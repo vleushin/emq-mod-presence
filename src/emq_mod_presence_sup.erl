@@ -14,22 +14,22 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emq_mod_presence_app).
+-module(emq_mod_presence_sup).
 
--behaviour(application).
+-behaviour(supervisor).
 
--export([start/2, stop/1]).
+-export([start_link/0]).
 
-start(_Type, _Args) ->
-    if_enabled(fun emq_mod_presence:load/1),
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+%% Supervisor callbacks
+-export([init/1]).
 
-stop(_State) ->
-    if_enabled(fun emq_mod_presence:unload/1).
+start_link() ->
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []),
+    supervisor:start_link({local, brod_sup}, ?MODULE, []).
 
-if_enabled(Fun) ->
-    case application:get_env(emq_mod_presence, enable, false) of
-        true  -> Fun(application:get_all_env(emq_mod_presence));
-        false -> ok
-    end.
+%%--------------------------------------------------------------------
+%% Supervisor callbacks
+%%--------------------------------------------------------------------
 
+init([]) ->
+    {ok, {{one_for_one, 10, 100}, []}}.
