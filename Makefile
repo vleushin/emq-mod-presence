@@ -2,7 +2,8 @@ PROJECT = emq_mod_presence
 PROJECT_DESCRIPTION = Presence Module
 PROJECT_VERSION = 2.0.7
 
-DEPS = ecpool brod supervisor3 kafka_protocol snappyer
+DEPS = ecpool ekaf
+dep_ekaf = git https://github.com/helpshift/ekaf master
 dep_ecpool = git https://github.com/emqtt/ecpool master
 dep_brod = git https://github.com/klarna/brod master
 dep_supervisor3 = git https://github.com/klarna/supervisor3 master
