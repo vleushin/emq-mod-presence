@@ -21,8 +21,9 @@
 -export([start/2, stop/1]).
 
 start(_Type, _Args) ->
+    {ok, Sup} = emq_mod_presence_sup:start_link(),
     if_enabled(fun emq_mod_presence:load/1),
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    {ok, Sup}.
 
 stop(_State) ->
     if_enabled(fun emq_mod_presence:unload/1).

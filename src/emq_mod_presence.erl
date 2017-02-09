@@ -17,6 +17,7 @@
 -module(emq_mod_presence).
 
 -include_lib("emqttd/include/emqttd.hrl").
+-include("emqttd_gpb.hrl").
 
 -behaviour(emqttd_gen_mod).
 
@@ -25,34 +26,71 @@
 -export([on_client_connected/3, on_client_disconnected/3]).
 
 load(Env) ->
-    emqttd:hook('client.connected',    fun ?MODULE:on_client_connected/3, [Env]),
+    {ok, _} = application:ensure_all_started(brod),
+    KafkaBootstrapEndpointsString = proplists:get_value(kafka_bootstrap_endpoints, Env, "localhost:9092"),
+    KafkaBootstrapEndpoints = parse_kafka_bootstrap_endpoints_string(KafkaBootstrapEndpointsString),
+    PresenceTopic = list_to_binary(proplists:get_value(kafka_presence_topic, Env, "mqtt-presence-raw")),
+    ClientConfig = [{reconnect_cool_down_seconds, 10}],
+    ok = brod:start_client(KafkaBootstrapEndpoints, kafka_client, ClientConfig),
+    ok = brod:start_producer(kafka_client, PresenceTopic, _ProducerConfig = []),
+    emqttd:hook('client.connected', fun ?MODULE:on_client_connected/3, [Env]),
     emqttd:hook('client.disconnected', fun ?MODULE:on_client_disconnected/3, [Env]).
 
-on_client_connected(ConnAck, Client = #mqtt_client{client_id  = ClientId,
-                                                   username   = Username,
-                                                   peername   = {IpAddr, _},
-                                                   clean_sess = CleanSess,
-                                                   proto_ver  = ProtoVer}, Env) ->
+on_client_connected(ConnAck, Client = #mqtt_client{client_id = ClientId,
+    username = Username,
+    peername = {IpAddr, _},
+    clean_sess = CleanSess,
+    proto_ver = ProtoVer}, Env) ->
     Payload = mochijson2:encode([{clientid, ClientId},
-                                 {username, Username},
-                                 {ipaddress, list_to_binary(emqttd_net:ntoa(IpAddr))},
-                                 {session, sess(CleanSess)},
-                                 {protocol, ProtoVer},
-                                 {connack, ConnAck},
-                                 {ts, emqttd_time:now_to_secs()}]),
+        {username, Username},
+        {ipaddress, list_to_binary(emqttd_net:ntoa(IpAddr))},
+        {session, sess(CleanSess)},
+        {protocol, ProtoVer},
+        {connack, ConnAck},
+        {ts, emqttd_time:now_to_secs()}]),
     Msg = message(qos(Env), topic(connected, ClientId), Payload),
+    Sess = case CleanSess of
+               true -> false;
+               false -> true
+           end,
     emqttd:publish(emqttd_message:set_flag(sys, Msg)),
+    KafkaMessage = #'EmqttdPresence'{
+        username = Username,
+        client_id = ClientId,
+        time = millisecs(),
+        presence = {connected_message, #'ConnectedMessage'{
+            ip_address = list_to_binary(emqttd_net:ntoa(IpAddr)),
+            conn_ack = emqttd_gpb:'enum_symbol_by_value_ConnectedMessage.ConnAck'(ConnAck),
+            session = Sess,
+            protocol_version = ProtoVer}
+        }},
+    PresenceTopic = list_to_binary(proplists:get_value(kafka_presence_topic, Env, "mqtt-presence-raw")),
+    PresenceTopicPartition = rand:uniform(proplists:get_value(kafka_presence_topic_partition_count, Env, 1)) - 1,
+    ok = brod:produce_sync(kafka_client, PresenceTopic, PresenceTopicPartition, ClientId, emqttd_gpb:encode_msg(KafkaMessage)),
     {ok, Client}.
 
-on_client_disconnected(Reason, #mqtt_client{client_id = ClientId}, Env) ->
+on_client_disconnected(Reason, #mqtt_client{
+    username = Username,
+    client_id = ClientId}, Env) ->
     Payload = mochijson2:encode([{clientid, ClientId},
-                                 {reason, reason(Reason)},
-                                 {ts, emqttd_time:now_to_secs()}]),
+        {reason, reason(Reason)},
+        {ts, emqttd_time:now_to_secs()}]),
     Msg = message(qos(Env), topic(disconnected, ClientId), Payload),
-    emqttd:publish(emqttd_message:set_flag(sys, Msg)), ok.
+    emqttd:publish(emqttd_message:set_flag(sys, Msg)),
+    KafkaMessage = #'EmqttdPresence'{
+        username = Username,
+        client_id = ClientId,
+        time = millisecs(),
+        presence = {disconnected_message, #'DisconnectedMessage'{
+            reason = reason_binary(Reason)
+        }
+        }},
+    PresenceTopic = list_to_binary(proplists:get_value(kafka_presence_topic, Env, "mqtt-presence-raw")),
+    PresenceTopicPartition = rand:uniform(proplists:get_value(kafka_presence_topic_partition_count, Env, 1)) - 1,
+    ok = brod:produce_sync(kafka_client, PresenceTopic, PresenceTopicPartition, ClientId, emqttd_gpb:encode_msg(KafkaMessage)).
 
 unload(_Env) ->
-    emqttd:unhook('client.connected',    fun ?MODULE:on_client_connected/3),
+    emqttd:unhook('client.connected', fun ?MODULE:on_client_connected/3),
     emqttd:unhook('client.disconnected', fun ?MODULE:on_client_disconnected/3).
 
 message(Qos, Topic, Payload) ->
@@ -64,7 +102,7 @@ topic(disconnected, ClientId) ->
     emqttd_topic:systop(list_to_binary(["clients/", ClientId, "/disconnected"])).
 
 sess(false) -> true;
-sess(true)  -> false.
+sess(true) -> false.
 
 qos(Env) -> proplists:get_value(qos, Env, 0).
 
@@ -72,3 +110,16 @@ reason(Reason) when is_atom(Reason) -> Reason;
 reason({Error, _}) when is_atom(Error) -> Error;
 reason(_) -> internal_error.
 
+reason_binary(Reason) when is_atom(Reason) -> atom_to_binary(Reason, latin1);
+reason_binary({Error, _}) when is_atom(Error) -> <<"Error">>;
+reason_binary(_) -> <<"internal_error">>.
+
+parse_kafka_bootstrap_endpoints_string(KafkaBootstrapEndpointsString) ->
+    lists:map(fun(HostPort) ->
+        [Host, Port] = re:split(HostPort, "\:", [{return, list}]),
+        {Host, list_to_integer(Port)} end,
+        re:split(KafkaBootstrapEndpointsString, "\,", [{return, list}])).
+
+millisecs() ->
+    {Mega, Sec, Micro} = os:timestamp(),
+    (Mega * 1000000 + Sec) * 1000 + round(Micro / 1000).

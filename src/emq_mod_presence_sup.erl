@@ -24,8 +24,7 @@
 -export([init/1]).
 
 start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []),
-    supervisor:start_link({local, brod_sup}, ?MODULE, []).
+    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %%--------------------------------------------------------------------
 %% Supervisor callbacks
